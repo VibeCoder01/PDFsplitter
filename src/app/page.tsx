@@ -14,7 +14,7 @@ export default function Home() {
             PDF Splitter
           </h1>
           <p className="mt-3 max-w-2xl text-lg text-muted-foreground">
-            Easily divide your PDF files. Upload a document and choose to split it by page count or a custom delimiter.
+            Easily divide your PDF files. Upload a document and split it by page count.
           </p>
         </header>
         <PdfSplitter />

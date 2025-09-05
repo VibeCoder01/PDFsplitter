@@ -8,7 +8,6 @@ import {
   Download,
   Loader2,
   BookOpen,
-  Regex,
   X,
   Plus,
   Minus,
@@ -18,26 +17,15 @@ import JSZip from 'jszip';
 import { AnimatePresence, motion } from 'framer-motion';
 
 import { useToast } from '@/hooks/use-toast';
-import { splitPdfByDelimiter } from '@/ai/flows/split-pdf-by-delimiter';
 import { Button } from '@/components/ui/button';
 import { Card, CardContent, CardDescription, CardFooter, CardHeader, CardTitle } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
-import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { ScrollArea } from '@/components/ui/scroll-area';
 import Dropzone from '@/components/dropzone';
 
-type SplitMethod = 'pages' | 'delimiter';
 type SplitPreview = { start: number; end: number }[];
 type ProcessingState = { active: boolean; message: string };
-
-const fileToDataUri = (file: File): Promise<string> =>
-  new Promise((resolve, reject) => {
-    const reader = new FileReader();
-    reader.onload = () => resolve(reader.result as string);
-    reader.onerror = reject;
-    reader.readAsDataURL(file);
-  });
 
 const downloadBlob = (blob: Blob, filename: string) => {
   const url = URL.createObjectURL(blob);
@@ -53,7 +41,6 @@ const downloadBlob = (blob: Blob, filename: string) => {
 export default function PdfSplitter() {
   const [file, setFile] = useState<File | null>(null);
   const [totalPages, setTotalPages] = useState(0);
-  const [splitMethod, setSplitMethod] = useState<SplitMethod>('pages');
   const [splitValue, setSplitValue] = useState('1');
   const [preview, setPreview] = useState<SplitPreview | null>(null);
   const [processing, setProcessing] = useState<ProcessingState>({ active: false, message: '' });
@@ -87,28 +74,12 @@ export default function PdfSplitter() {
     
     try {
       let ranges: SplitPreview = [];
-      if (splitMethod === 'pages') {
-        const pagesPerSplit = parseInt(splitValue, 10);
-        if (isNaN(pagesPerSplit) || pagesPerSplit <= 0) {
-          throw new Error('Please enter a valid number of pages greater than 0.');
-        }
-        for (let i = 0; i < totalPages; i += pagesPerSplit) {
-          ranges.push({ start: i + 1, end: Math.min(i + pagesPerSplit, totalPages) });
-        }
-      } else {
-        if (!splitValue.trim()) {
-            throw new Error('Please enter a delimiter regular expression.');
-        }
-        const dataUri = await fileToDataUri(file);
-        const result = await splitPdfByDelimiter({ pdfDataUri: dataUri, delimiterRegex: splitValue });
-        const startPages = JSON.parse(result.splitInstructions);
-        if (!Array.isArray(startPages) || startPages.length === 0) {
-            throw new Error('AI could not determine split points. Try a different delimiter.');
-        }
-        ranges = startPages.map((startPage, index) => ({
-          start: startPage,
-          end: (index + 1 < startPages.length) ? startPages[index + 1] - 1 : totalPages,
-        }));
+      const pagesPerSplit = parseInt(splitValue, 10);
+      if (isNaN(pagesPerSplit) || pagesPerSplit <= 0) {
+        throw new Error('Please enter a valid number of pages greater than 0.');
+      }
+      for (let i = 0; i < totalPages; i += pagesPerSplit) {
+        ranges.push({ start: i + 1, end: Math.min(i + pagesPerSplit, totalPages) });
       }
       setPreview(ranges);
     } catch (error: any) {
@@ -164,10 +135,9 @@ export default function PdfSplitter() {
     setTotalPages(0);
     setPreview(null);
     setSplitValue('1');
-    setSplitMethod('pages');
   };
 
-  const pageCount = useMemo(() => parseInt(splitValue, 10), [splitValue]);
+  const pageCount = useMemo(() => parseInt(splitValue, 10) || 1, [splitValue]);
 
   return (
     <div className="space-y-6">
@@ -176,7 +146,7 @@ export default function PdfSplitter() {
           <motion.div initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -20 }}>
             <Card>
               <CardHeader>
-                <CardTitle>Upload your PDF</CardTitle>
+                <CardTitle>1. Upload your PDF</CardTitle>
                 <CardDescription>Drag and drop a PDF file or click to select one from your device.</CardDescription>
               </CardHeader>
               <CardContent>
@@ -210,33 +180,18 @@ export default function PdfSplitter() {
 
             <Card>
               <CardHeader>
-                <CardTitle>2. Choose Split Method</CardTitle>
-                <CardDescription>Select how you want to divide your PDF.</CardDescription>
+                <CardTitle>2. Set Page Count</CardTitle>
+                <CardDescription>Select how many pages you want in each split file.</CardDescription>
               </CardHeader>
               <CardContent>
-                <Tabs value={splitMethod} onValueChange={(v) => setSplitMethod(v as SplitMethod)} className="w-full">
-                  <TabsList className="grid w-full grid-cols-2">
-                    <TabsTrigger value="pages"><BookOpen className="mr-2" /> By Page Count</TabsTrigger>
-                    <TabsTrigger value="delimiter"><Regex className="mr-2"/> By Delimiter (AI)</TabsTrigger>
-                  </TabsList>
-                  <TabsContent value="pages" className="mt-4">
-                    <div className="space-y-2">
-                      <Label htmlFor="pages-per-split">Pages per file</Label>
-                      <div className="flex items-center gap-2">
-                          <Button variant="outline" size="icon" onClick={() => setSplitValue(String(Math.max(1, pageCount - 1)))}><Minus className="h-4 w-4" /></Button>
-                          <Input id="pages-per-split" type="number" value={splitValue} onChange={(e) => setSplitValue(e.target.value)} min="1" className="text-center" />
-                          <Button variant="outline" size="icon" onClick={() => setSplitValue(String(pageCount + 1))}><Plus className="h-4 w-4" /></Button>
-                      </div>
-                    </div>
-                  </TabsContent>
-                  <TabsContent value="delimiter" className="mt-4">
-                    <div className="space-y-2">
-                        <Label htmlFor="delimiter-regex">Delimiter (Regular Expression)</Label>
-                        <Input id="delimiter-regex" placeholder="e.g., ^Chapter \\d+" value={splitValue} onChange={(e) => setSplitValue(e.target.value)} />
-                        <p className="text-xs text-muted-foreground">The AI will find pages that start with text matching this pattern.</p>
-                    </div>
-                  </TabsContent>
-                </Tabs>
+                <div className="space-y-2">
+                  <Label htmlFor="pages-per-split"><BookOpen className="mr-2 inline-block h-4 w-4" />Pages per file</Label>
+                  <div className="flex items-center gap-2">
+                      <Button variant="outline" size="icon" onClick={() => setSplitValue(String(Math.max(1, pageCount - 1)))}><Minus className="h-4 w-4" /></Button>
+                      <Input id="pages-per-split" type="number" value={splitValue} onChange={(e) => setSplitValue(e.target.value)} min="1" className="text-center" />
+                      <Button variant="outline" size="icon" onClick={() => setSplitValue(String(pageCount + 1))}><Plus className="h-4 w-4" /></Button>
+                  </div>
+                </div>
               </CardContent>
               <CardFooter>
                  <Button onClick={handlePreview} disabled={processing.active} className="w-full bg-accent text-accent-foreground hover:bg-accent/90">
